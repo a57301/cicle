@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-bloom-pink: #FF8A9B;
+  --color-bloom-pink-soft: #FFF0F2;
+  --color-bloom-purple: #9D8DF1;
+  --color-bloom-purple-soft: #F5F3FF;
+  --color-bloom-orange: #FFB347;
+  --color-bloom-mint: #A7F3D0;
+  
+  --radius-bloom: 1.5rem;
+}
+
+@layer base {
+  body {
+    @apply bg-[#FAFAFA] text-slate-800 antialiased;
+  }
+}
+
+.glass-card {
+  @apply bg-white/80 backdrop-blur-sm border border-white/20 shadow-sm;
+}
+

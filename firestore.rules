@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (required, max 50)
+    //   - email: string (required, email format)
+    //   - cycleLength: number (required, 20-45)
+    //   - periodDuration: number (required, 1-10)
+    //   - lastPeriodDate: string (required, ISO 8601 date)
+    //   - onboardingComplete: bool (optional)
+    //   - createdAt: string (optional, ISO 8601 date-time)
+    //
+    // Collection: /users/{uid}/daily_logs/{date}
+    // Fields:
+    //   - uid: string (required)
+    //   - date: string (required, YYYY-MM-DD)
+    //   - flowIntensity: string (enum: none, spotting, light, medium, heavy)
+    //   - physicalSymptoms: list (strings, max 20 items)
+    //   - moods: list (strings, max 20 items)
+    //   - energyLevel: number (1-5)
+    //   - notes: string (max 500)
+    //   - createdAt: string (ISO 8601 date-time)
+    //
+    // Collection: /users/{uid}/cycles/{cycleId}
+    // Fields:
+    //   - uid: string (required)
+    //   - startDate: string (required, ISO 8601 date)
+    //   - endDate: string (required, ISO 8601 date)
+    //   - duration: number (required)
+    //   - periodDuration: number (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDate(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             (data.email == "" || isValidEmail(data.email)) &&
+             data.cycleLength is number && data.cycleLength >= 20 && data.cycleLength <= 45 &&
+             data.periodDuration is number && data.periodDuration >= 1 && data.periodDuration <= 10 &&
+             isValidDate(data.lastPeriodDate) &&
+             (!('language' in data) || data.language in ['en', 'es']) &&
+             (!('onboardingComplete' in data) || data.onboardingComplete is bool) &&
+             (!('createdAt' in data) || data.createdAt is string) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000000)) &&
+             (!('privacySettings' in data) || data.privacySettings is map);
+    }
+
+    function isValidDailyLog(data) {
+      return data.uid == request.auth.uid &&
+             isValidDate(data.date) &&
+             (!('time' in data) || data.time is string) &&
+             (!('id' in data) || data.id is string) &&
+             data.flowIntensity in ['none', 'spotting', 'light', 'medium', 'heavy'] &&
+             data.physicalSymptoms is list && data.physicalSymptoms.size() <= 20 &&
+             data.moods is list && data.moods.size() <= 20 &&
+             data.energyLevel is number && data.energyLevel >= 1 && data.energyLevel <= 5 &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 500));
+    }
+
+    function isValidCycle(data) {
+      return data.uid == request.auth.uid &&
+             isValidDate(data.startDate) &&
+             isValidDate(data.endDate) &&
+             data.duration is number &&
+             data.periodDuration is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidUser(request.resource.data);
+      allow update: if isOwner(uid) && isValidUser(request.resource.data);
+
+      match /daily_logs/{logId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidDailyLog(request.resource.data);
+        allow update: if isOwner(uid) && isValidDailyLog(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+
+      match /cycles/{cycleId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidCycle(request.resource.data);
+        allow update: if isOwner(uid) && isValidCycle(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+
+      match /daily_content/{date} {
+        allow read: if isOwner(uid);
+        allow write: if isOwner(uid);
+      }
+    }
+  }
+}
