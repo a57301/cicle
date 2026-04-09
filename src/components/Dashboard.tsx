@@ -6,6 +6,7 @@ import { calculateCycleInfo, PHASE_COLORS, PHASE_LABELS } from '../lib/cycleLogi
 import { 
   getCycleInsights, 
   getDailyDietPlan, 
+  getDailyBundle,
   checkCalories, 
   generateRecipes,
   getLunarRecommendations 
@@ -213,60 +214,54 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
         let currentContent = docSnap.exists() ? docSnap.data() : { date: today };
         let updated = false;
 
-        // Insights
-        if (!currentContent.insights) {
-          setLoadingInsights(true);
+        // Check if we need to generate anything
+        const needsInsights = !currentContent.insights;
+        const needsLunar = !currentContent.lunarRecs && cycleInfo.moonPhase;
+        const needsDiet = !currentContent.dietPlan;
+
+        if (needsInsights || needsLunar || needsDiet) {
+          setLoadingInsights(needsInsights);
+          setLoadingLunar(needsLunar);
+          setLoadingDiet(needsDiet);
+
           try {
-            console.log("Generating insights for user:", profile.uid);
-            const data = await getCycleInsights(profile, logs, cycleInfo.phase);
-            if (data) {
-              currentContent.insights = data;
-              setInsights(data);
+            console.log("Generating daily bundle for user:", profile.uid);
+            const bundle = await getDailyBundle(
+              profile, 
+              logs, 
+              cycleInfo.phase, 
+              cycleInfo.moonPhase?.nameEn || 'New Moon'
+            );
+
+            if (bundle) {
+              if (needsInsights && bundle.insights) {
+                currentContent.insights = bundle.insights;
+                setInsights(bundle.insights);
+              }
+              if (needsLunar && bundle.lunarRecs) {
+                currentContent.lunarRecs = bundle.lunarRecs;
+                setLunarRecs(bundle.lunarRecs);
+              }
+              if (needsDiet && bundle.dietPlan) {
+                currentContent.dietPlan = bundle.dietPlan;
+                setDietPlan(bundle.dietPlan);
+              }
               updated = true;
-            } else {
-              console.error("Gemini returned null insights");
             }
-          } catch (e) {
-            console.error("Error in fetchAllDailyContent (insights):", e);
+          } catch (e: any) {
+            console.error("Error generating daily bundle:", e);
+            if (e.message?.includes('429') || e.message?.includes('quota')) {
+              // Handle rate limit specifically if needed, maybe show a toast
+            }
+          } finally {
+            setLoadingInsights(false);
+            setLoadingLunar(false);
+            setLoadingDiet(false);
           }
-          setLoadingInsights(false);
         } else {
+          // All content already exists
           setInsights(currentContent.insights);
-        }
-
-        // Lunar Recs
-        if (!currentContent.lunarRecs && cycleInfo.moonPhase) {
-          setLoadingLunar(true);
-          try {
-            const data = await getLunarRecommendations(cycleInfo.moonPhase.nameEn, 'es');
-            if (data) {
-              currentContent.lunarRecs = data;
-              setLunarRecs(data);
-              updated = true;
-            }
-          } catch (e) {
-            console.error("Error in fetchAllDailyContent (lunar):", e);
-          }
-          setLoadingLunar(false);
-        } else if (currentContent.lunarRecs) {
           setLunarRecs(currentContent.lunarRecs);
-        }
-
-        // Diet Plan
-        if (!currentContent.dietPlan) {
-          setLoadingDiet(true);
-          try {
-            const data = await getDailyDietPlan(profile, cycleInfo.phase);
-            if (data) {
-              currentContent.dietPlan = data;
-              setDietPlan(data);
-              updated = true;
-            }
-          } catch (e) {
-            console.error("Error in fetchAllDailyContent (diet):", e);
-          }
-          setLoadingDiet(false);
-        } else {
           setDietPlan(currentContent.dietPlan);
         }
 
@@ -283,16 +278,61 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
     }
   }, [cycleInfo?.phase, profile.uid, logs.length]);
 
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
   const handleLogout = () => auth.signOut();
+
+  const resetAllDailyContent = async () => {
+    if (!cycleInfo || !profile.uid) return;
+    setLoadingInsights(true);
+    setLoadingLunar(true);
+    setLoadingDiet(true);
+    setQuotaExceeded(false);
+
+    try {
+      const bundle = await getDailyBundle(
+        profile, 
+        logs, 
+        cycleInfo.phase, 
+        cycleInfo.moonPhase?.nameEn || 'New Moon'
+      );
+
+      if (bundle) {
+        setInsights(bundle.insights);
+        setLunarRecs(bundle.lunarRecs);
+        setDietPlan(bundle.dietPlan);
+        
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const docRef = doc(db, 'users', profile.uid, 'daily_content', today);
+        await setDoc(docRef, bundle, { merge: true });
+      }
+    } catch (e: any) {
+      console.error("Error resetting daily bundle:", e);
+      if (e.message?.includes('429') || e.message?.includes('quota')) {
+        setQuotaExceeded(true);
+      }
+    } finally {
+      setLoadingInsights(false);
+      setLoadingLunar(false);
+      setLoadingDiet(false);
+    }
+  };
 
   const resetInsights = async () => {
     if (!cycleInfo || !profile.uid) return;
     setLoadingInsights(true);
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const data = await getCycleInsights(profile, logs, cycleInfo.phase);
-    setInsights(data);
-    const docRef = doc(db, 'users', profile.uid, 'daily_content', today);
-    await setDoc(docRef, { insights: data }, { merge: true });
+    setQuotaExceeded(false);
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const data = await getCycleInsights(profile, logs, cycleInfo.phase);
+      if (data) {
+        setInsights(data);
+        const docRef = doc(db, 'users', profile.uid, 'daily_content', today);
+        await setDoc(docRef, { insights: data }, { merge: true });
+      }
+    } catch (e: any) {
+      if (e.message?.includes('429')) setQuotaExceeded(true);
+    }
     setLoadingInsights(false);
   };
 
@@ -443,6 +483,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
       </nav>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-8">
+        {quotaExceeded && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-rose-50 border border-rose-100 p-4 rounded-2xl flex items-center gap-4 text-rose-600"
+          >
+            <AlertCircle className="shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-bold">{t('Daily AI Limit Reached', 'Límite de IA alcanzado')}</p>
+              <p className="text-xs opacity-80">{t('The free AI tier has reached its limit for now. Please try again in about a minute.', 'El nivel gratuito de IA ha alcanzado su límite por ahora. Por favor, intenta de nuevo en un minuto.')}</p>
+            </div>
+            <button 
+              onClick={() => setQuotaExceeded(false)}
+              className="p-1 hover:bg-rose-100 rounded-lg transition-colors"
+            >
+              <Plus className="rotate-45" size={20} />
+            </button>
+          </motion.div>
+        )}
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <motion.div 
@@ -472,6 +531,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
                     <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
                     {t('Data synced', 'Datos sincronizados')}
                   </div>
+                  <button 
+                    onClick={resetAllDailyContent}
+                    disabled={loadingInsights || loadingLunar || loadingDiet}
+                    className="p-2 bg-bloom-pink/10 text-bloom-pink rounded-full hover:bg-bloom-pink/20 transition-all disabled:opacity-50"
+                    title={t('Refresh AI Content', 'Actualizar contenido IA')}
+                  >
+                    <RotateCcw size={16} className={(loadingInsights || loadingLunar || loadingDiet) ? "animate-spin" : ""} />
+                  </button>
                 </div>
               </div>
 

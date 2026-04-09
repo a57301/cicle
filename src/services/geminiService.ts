@@ -1,16 +1,96 @@
 import { GoogleGenAI } from "@google/genai";
 import { DailyLog, UserProfile, CyclePhase } from "../types";
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+
 const ai = new GoogleGenAI({ 
-  apiKey: import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "" 
+  apiKey: GEMINI_API_KEY 
 });
+
+function cleanJSON(text: string) {
+  return text.replace(/```json|```/g, "").trim();
+}
+
+function parseGeminiJSON(text: string) {
+  const cleaned = cleanJSON(text);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw e;
+  }
+}
+
+export async function getDailyBundle(
+  profile: UserProfile,
+  logs: DailyLog[],
+  currentPhase: CyclePhase,
+  moonPhaseName: string
+) {
+  if (!GEMINI_API_KEY) return null;
+  
+  try {
+    const prompt = `
+      You are a specialized health and wellness assistant for CycleBloom.
+      User Profile: ${JSON.stringify(profile)}
+      Current Cycle Phase: ${currentPhase}
+      Moon Phase: ${moonPhaseName}
+      Recent Logs: ${JSON.stringify(logs.slice(0, 5))}
+      Language: Spanish
+
+      Provide a complete daily bundle including:
+      1. Cycle Insights: 2-3 sentences about their body in this phase + 3 actionable tips.
+      2. Nutritional Guide: Specific foods to eat, avoid, and a general tip.
+      3. Daily Diet Plan: Breakfast, lunch, dinner, and 2 snacks (considering restrictions: ${profile.dietaryRestrictions || 'None'}).
+      4. Lunar Recommendations: 4 activities based on the moon phase with explanations.
+
+      Format the response as a single JSON object:
+      {
+        "insights": {
+          "insight": "...",
+          "tips": ["...", "...", "..."],
+          "nutrition": {
+            "eat": ["...", "..."],
+            "avoid": ["...", "..."],
+            "tip": "..."
+          }
+        },
+        "dietPlan": {
+          "breakfast": "...",
+          "lunch": "...",
+          "dinner": "...",
+          "snacks": ["...", "..."]
+        },
+        "lunarRecs": {
+          "recommendations": [
+            { "activity": "...", "explanation": "..." },
+            { "activity": "...", "explanation": "..." },
+            { "activity": "...", "explanation": "..." },
+            { "activity": "...", "explanation": "..." }
+          ]
+        }
+      }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt
+    });
+
+    return parseGeminiJSON(response.text || "");
+  } catch (error) {
+    console.error("Error getting daily bundle:", error);
+    throw error; // Re-throw to handle in UI
+  }
+}
 
 export async function getCycleInsights(
   profile: UserProfile, 
   logs: DailyLog[], 
   currentPhase: CyclePhase
 ) {
-  if (!ai.apiKey) {
+  if (!GEMINI_API_KEY) {
     console.error("Gemini API Key is missing!");
     return null;
   }
@@ -46,26 +126,7 @@ export async function getCycleInsights(
       contents: prompt
     });
     
-    const text = response.text || "";
-    console.log("Gemini Raw Response:", text);
-    
-    // Clean the response in case it contains markdown code blocks
-    const cleanedText = text.replace(/```json|```/g, "").trim();
-    try {
-      return JSON.parse(cleanedText);
-    } catch (parseError) {
-      console.error("Error parsing Gemini JSON:", parseError, "Cleaned text:", cleanedText);
-      // Try to extract JSON if there's text around it
-      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[0]);
-        } catch (e) {
-          throw parseError;
-        }
-      }
-      throw parseError;
-    }
+    return parseGeminiJSON(response.text || "");
   } catch (error) {
     console.error("Error getting Gemini insights:", error);
     return null;
@@ -101,7 +162,7 @@ export async function getDailyDietPlan(profile: UserProfile, currentPhase: Cycle
       contents: prompt
     });
     
-    return JSON.parse((response.text || "").replace(/```json|```/g, "").trim());
+    return parseGeminiJSON(response.text || "");
   } catch (error) {
     console.error("Error getting diet plan:", error);
     return null;
@@ -134,7 +195,7 @@ export async function checkCalories(mealDescription: string, profile: UserProfil
       contents: prompt
     });
     
-    return JSON.parse((response.text || "").replace(/```json|```/g, "").trim());
+    return parseGeminiJSON(response.text || "");
   } catch (error) {
     console.error("Error checking calories:", error);
     return null;
@@ -165,7 +226,7 @@ export async function generateRecipes(ingredients: string, profile: UserProfile,
       contents: prompt
     });
     
-    return JSON.parse((response.text || "").replace(/```json|```/g, "").trim());
+    return parseGeminiJSON(response.text || "");
   } catch (error) {
     console.error("Error generating recipes:", error);
     return null;
@@ -199,7 +260,7 @@ export async function getLunarRecommendations(moonPhase: string, language: 'en' 
       contents: prompt
     });
     
-    return JSON.parse((response.text || "").replace(/```json|```/g, "").trim());
+    return parseGeminiJSON(response.text || "");
   } catch (error) {
     console.error("Error getting lunar recommendations:", error);
     return null;
