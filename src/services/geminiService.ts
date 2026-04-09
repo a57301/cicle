@@ -10,6 +10,10 @@ export async function getCycleInsights(
   logs: DailyLog[], 
   currentPhase: CyclePhase
 ) {
+  if (!ai.apiKey) {
+    console.error("Gemini API Key is missing!");
+    return null;
+  }
   try {
     const prompt = `
       You are a specialized health assistant for a menstrual cycle tracking app called CycleBloom.
@@ -43,10 +47,25 @@ export async function getCycleInsights(
     });
     
     const text = response.text || "";
+    console.log("Gemini Raw Response:", text);
     
     // Clean the response in case it contains markdown code blocks
     const cleanedText = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleanedText);
+    try {
+      return JSON.parse(cleanedText);
+    } catch (parseError) {
+      console.error("Error parsing Gemini JSON:", parseError, "Cleaned text:", cleanedText);
+      // Try to extract JSON if there's text around it
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          throw parseError;
+        }
+      }
+      throw parseError;
+    }
   } catch (error) {
     console.error("Error getting Gemini insights:", error);
     return null;

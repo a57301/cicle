@@ -196,7 +196,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
 
     const today = format(new Date(), 'yyyy-MM-dd');
     const fetchAllDailyContent = async () => {
-      if (!cycleInfo || !profile.uid) return;
+      if (!cycleInfo || !profile.uid) {
+        console.warn("Missing cycleInfo or profile.uid, skipping daily content fetch");
+        return;
+      }
+      
+      // Basic validation of profile data needed for AI
+      if (!profile.cycleLength || !profile.periodDuration || !profile.lastPeriodDate) {
+        console.warn("Incomplete profile data for AI generation:", profile);
+        return;
+      }
       
       const docRef = doc(db, 'users', profile.uid, 'daily_content', today);
       try {
@@ -207,11 +216,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
         // Insights
         if (!currentContent.insights) {
           setLoadingInsights(true);
-          const data = await getCycleInsights(profile, logs, cycleInfo.phase);
-          currentContent.insights = data;
-          setInsights(data);
+          try {
+            console.log("Generating insights for user:", profile.uid);
+            const data = await getCycleInsights(profile, logs, cycleInfo.phase);
+            if (data) {
+              currentContent.insights = data;
+              setInsights(data);
+              updated = true;
+            } else {
+              console.error("Gemini returned null insights");
+            }
+          } catch (e) {
+            console.error("Error in fetchAllDailyContent (insights):", e);
+          }
           setLoadingInsights(false);
-          updated = true;
         } else {
           setInsights(currentContent.insights);
         }
@@ -219,11 +237,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
         // Lunar Recs
         if (!currentContent.lunarRecs && cycleInfo.moonPhase) {
           setLoadingLunar(true);
-          const data = await getLunarRecommendations(cycleInfo.moonPhase.nameEn, 'es');
-          currentContent.lunarRecs = data;
-          setLunarRecs(data);
+          try {
+            const data = await getLunarRecommendations(cycleInfo.moonPhase.nameEn, 'es');
+            if (data) {
+              currentContent.lunarRecs = data;
+              setLunarRecs(data);
+              updated = true;
+            }
+          } catch (e) {
+            console.error("Error in fetchAllDailyContent (lunar):", e);
+          }
           setLoadingLunar(false);
-          updated = true;
         } else if (currentContent.lunarRecs) {
           setLunarRecs(currentContent.lunarRecs);
         }
@@ -231,11 +255,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
         // Diet Plan
         if (!currentContent.dietPlan) {
           setLoadingDiet(true);
-          const data = await getDailyDietPlan(profile, cycleInfo.phase);
-          currentContent.dietPlan = data;
-          setDietPlan(data);
+          try {
+            const data = await getDailyDietPlan(profile, cycleInfo.phase);
+            if (data) {
+              currentContent.dietPlan = data;
+              setDietPlan(data);
+              updated = true;
+            }
+          } catch (e) {
+            console.error("Error in fetchAllDailyContent (diet):", e);
+          }
           setLoadingDiet(false);
-          updated = true;
         } else {
           setDietPlan(currentContent.dietPlan);
         }
@@ -1000,7 +1030,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
                     <div className="w-3/4 h-4 bg-slate-100 rounded-full animate-pulse mx-auto"></div>
                     <p className="text-sm text-slate-400">{t('Gemini is analyzing your patterns...', 'Gemini está analizando tus patrones...')}</p>
                   </div>
-                ) : (
+                ) : insights ? (
                   <div className="text-left space-y-8">
                     <div className="bg-bloom-purple-soft p-6 rounded-2xl">
                       <h3 className="font-bold text-bloom-purple mb-2">{t("What's happening now", "Qué está pasando ahora")}</h3>
@@ -1017,6 +1047,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
                         ))}
                       </div>
                     </div>
+                  </div>
+                ) : (
+                  <div className="py-12 space-y-6">
+                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                      <AlertCircle size={32} className="text-slate-300" />
+                    </div>
+                    <p className="text-sm text-slate-500 max-w-xs mx-auto">
+                      {t('No insights generated for today. Make sure your profile is complete.', 'No se generaron análisis para hoy. Asegúrate de que tu perfil esté completo.')}
+                    </p>
+                    <button 
+                      onClick={resetInsights}
+                      className="px-6 py-2 bg-bloom-pink text-white rounded-xl text-sm font-bold shadow-lg shadow-bloom-pink/20 hover:scale-105 transition-transform"
+                    >
+                      {t('Generate Now', 'Generar Ahora')}
+                    </button>
                   </div>
                 )}
               </div>
